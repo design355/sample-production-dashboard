@@ -3389,47 +3389,27 @@ def _ff_body(sheet_name, cfg, tab):
         metrics(tiles)
 
 
-        # ================= 1) TABLE + CHART: designer-wise target vs completed =================
-        st.markdown("---")
-        badge("👩‍🎨 Designer-wise Target vs Completed")
-        st.caption("Designer filter yahan apply nahi hota taaki sab designers ki tulna ho sake; baaki filters apply hote "
-                   "hain.  Done % ka rang: 🟢 ≥80%  🟡 40-79%  🔴 <40%.")
+        # ================= 1) CHART (full width, right after KPIs): designer-wise target vs completed =================
         dsc = ff_group(x_nd, "designer", "Designer", [n for n in des_order if n in set(x_nd["designer"])])
         team_of = d.groupby("designer")["team"].agg(lambda v: v.mode().iloc[0])
         dsc.insert(1, "Team", dsc["Designer"].map(team_of))
+        st.markdown("---")
+        badge("👩‍🎨 Designer-wise Target vs Completed")
+        st.caption("Designer filter yahan apply nahi hota taaki sab designers ki tulna ho sake; baaki filters apply hote hain.")
+        _ff_designer_chart(dsc, x_nd)
+
+        # ================= 2) TABLE: designer-wise numbers =================
+        st.markdown("---")
+        badge("📊 Designer-wise Table")
+        st.caption("Done % ka rang: 🟢 ≥80%  🟡 40-79%  🔴 <40%.")
         cols = ["Designer", "Team", "Items", "Target Qty", "Completed", "Pending", "Done %", "Overdue Items",
                 "Due ≤ 3 Days", "Nearest Open Due"]
         tbl = with_total(dsc[cols], "Designer", pct=("Done %", "Completed", "Target Qty"))
         tbl.loc[tbl["Designer"] == "TOTAL", ["Team", "Nearest Open Due"]] = ["", _ff_nearest_due(x_nd)]
-        c1, c2 = st.columns([1.55, 1], gap="medium")
-        with c1:
-            table_with_download(tbl, "flo_future_designer", pct_cols=("Done %",), rate_cols=("Done %",),
-                                rate_fn=ff_rate_class, key_col="Target Qty", height=560)
-        with c2:
-            o = dsc.sort_values("Target Qty")
-            od_pen = x_nd[x_nd["is_overdue"]].groupby("designer")["pending"].sum()
-            o_od = o["Designer"].map(od_pen).fillna(0.0)
-            fig = go.Figure()
-            fig.add_trace(go.Bar(name="Target", y=list(o["Designer"]), x=o["Target Qty"], orientation="h",
-                                 marker_color=_hex_to_rgba(COLORS["blue"], 0.35),
-                                 marker_line=dict(color=COLORS["blue"], width=1.2),
-                                 hovertemplate="%{y}<br>Target: %{x:,.0f} pcs<extra></extra>"))
-            fig.add_trace(go.Bar(name="Completed", y=list(o["Designer"]), x=o["Completed"], orientation="h",
-                                 marker_color=COLORS["green"],
-                                 text=[f"{p:.0f}%" if t > 0 else "" for p, t in zip(o["Done %"], o["Target Qty"])],
-                                 textposition="outside", cliponaxis=False,
-                                 customdata=np.stack([o["Pending"], o_od], axis=1),
-                                 hovertemplate="%{y}<br>Completed: %{x:,.0f} pcs<br>Pending: %{customdata[0]:,.0f} pcs"
-                                               "<br>Overdue pending: %{customdata[1]:,.0f} pcs<extra></extra>"))
-            fig.update_layout(barmode="overlay", legend_traceorder="normal", bargap=0.3)
-            fig.update_traces(width=0.7, selector=dict(name="Target"))
-            fig.update_traces(width=0.42, selector=dict(name="Completed"))
-            fig.update_xaxes(title="Pcs", range=[0, float(o["Target Qty"].max()) * 1.12 + 1])
-            fig.update_yaxes(title="")
-            chart(fig, "Designer-wise Target vs Completed (Pcs)", max(420, 34 * len(o) + 140), ns="ff",
-                  subtitle="Halki blue bar = Target · hari bar = Completed · % = Done %")
+        table_with_download(tbl, "flo_future_designer", pct_cols=("Done %",), rate_cols=("Done %",),
+                            rate_fn=ff_rate_class, key_col="Target Qty", height=560)
 
-        # ================= 2) TABLE: every sample, most urgent first =================
+        # ================= 3) TABLE: every sample, most urgent first =================
         st.markdown("---")
         badge("📋 Sample Detail (sab items · sabse urgent upar)")
         st.caption("Upar ke saare filters yahan lagte hain - ek designer chuno to uski poori list. "
@@ -3441,8 +3421,59 @@ def _ff_body(sheet_name, cfg, tab):
         st.download_button("⬇️ Download CSV", full.to_csv(index=False).encode("utf-8-sig"),
                            file_name="flo_future_samples.csv", mime="text/csv", key="dl_ff_samples")
 
-    # ================= 3) CHART: visits & meetings =================
+    # ================= 4) CHART: visits & meetings =================
     _ff_visits_chart(va, vb, vtab, vs)
+
+
+def _ff_designer_chart(dsc, x_nd):
+    """One horizontal stacked bar per designer. Full bar = Target Qty, split into
+    Completed | Pending: overdue | Pending: due in 0-3 days | Pending: due later | Pending: no due date.
+    Label at the end: done / target · Done % · overdue / due-soon items. Hover shows everything for that designer."""
+    if dsc.empty:
+        notice("Selected filters ke liye data nahi hai.")
+        return
+    seg = {"Overdue": ["Overdue"], "Due in 0-3 Days": ["Due Today", "Due in 1-3 Days"],
+           "Due Later": ["Due in 4-7 Days", "Due Later (> 7 Days)"], "No Due Date": ["No Due Date"]}
+    pen = {k: x_nd[x_nd["due_bucket"].isin(v)].groupby("designer")["pending"].sum() for k, v in seg.items()}
+    o = dsc.sort_values(["Target Qty", "Designer"], ascending=[True, False]).reset_index(drop=True)
+    names = list(o["Designer"])
+    ylab = [f"<b>{n}</b> · {t}" for n, t in zip(names, o["Team"])]
+    parts = {k: o["Designer"].map(v).fillna(0.0).to_numpy() for k, v in pen.items()}
+    hover = [(f"<b>{r['Designer']}</b> · {r['Team']}<br>Target: {fmt(r['Target Qty'])} pcs ({r['Items']} items)"
+              f"<br>Completed: {fmt(r['Completed'])} pcs ({r['Done %']:.1f}%)<br>Pending: {fmt(r['Pending'])} pcs"
+              f"<br>Overdue: {r['Overdue Items']} items · {fmt(parts['Overdue'][i])} pcs"
+              f"<br>Due in 0-3 days: {r['Due ≤ 3 Days']} items · {fmt(parts['Due in 0-3 Days'][i])} pcs"
+              f"<br>Nearest open due: {r['Nearest Open Due']}") for i, r in o.iterrows()]
+    colors = {"Completed": COLORS["green"], "Overdue": COLORS["red"], "Due in 0-3 Days": COLORS["orange"],
+              "Due Later": _hex_to_rgba(COLORS["blue"], 0.55), "No Due Date": _hex_to_rgba(COLORS["slate"], 0.55)}
+    fig = go.Figure()
+    series = [("Completed", o["Completed"].to_numpy())] + [(f"Pending · {k}", parts[k]) for k in seg]
+    for name, vals in series:
+        key = name.replace("Pending · ", "")
+        fig.add_trace(go.Bar(name=name, y=ylab, x=vals, orientation="h", marker_color=colors[key],
+                             marker_line=dict(width=0), text=[fmt(v) if v >= 1 else "" for v in vals],
+                             textposition="inside", insidetextanchor="middle",
+                             textfont=dict(color="#ffffff", size=11), customdata=hover,
+                             hovertemplate="%{customdata}<extra>" + name + "</extra>"))
+    # end label: done / target · % · alerts
+    top = float(np.maximum(o["Target Qty"], o["Completed"] + o["Pending"]).max())
+    for i, r in o.iterrows():
+        tail = f"{fmt(r['Completed'])}/{fmt(r['Target Qty'])} · {r['Done %']:.0f}%"
+        if r["Overdue Items"]:
+            tail += f"  🔴 {r['Overdue Items']} late"
+        if r["Due ≤ 3 Days"]:
+            tail += f"  🟠 {r['Due ≤ 3 Days']} due soon"
+        end = max(float(r["Target Qty"]), float(r["Completed"] + r["Pending"]))
+        fig.add_annotation(x=end, y=ylab[i], text=tail, showarrow=False, xanchor="left", xshift=6,
+                           font=dict(size=11, color=PLOT_TEXT))
+    fig.update_layout(barmode="stack", bargap=0.28, legend_traceorder="normal")
+    fig.update_xaxes(title="Pcs (poori bar = Target)", range=[0, top * 1.38 + 1])
+    fig.update_yaxes(title="")
+    tot = dsc[["Target Qty", "Completed", "Pending"]].sum()
+    chart(fig, "Designer-wise Target vs Completed (Pcs)", max(440, 40 * len(o) + 150), ns="ff",
+          subtitle=f"Total {fmt(tot['Completed'])} / {fmt(tot['Target Qty'])} done "
+                   f"({safe_div_pct(tot['Completed'], tot['Target Qty']):.1f}%) · hari = done · laal = date nikal gayi · "
+                   "orange = 3 din me due · blue = baad me due · grey = due date nahi · mouse le jao to poori detail")
 
 
 def _ff_export(x):
