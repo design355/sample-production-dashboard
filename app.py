@@ -3149,10 +3149,10 @@ def ff_item_table(x, show_designer=False, height=None, total_label="TARGET"):
     if x.empty:
         notice("Selected filters ke liye data nahi hai.")
         return
-    sc, dc = ff_status_colors(x["status"].unique()), ff_due_colors()
+    sc = ff_status_colors(x["status"].unique())
     heads = ["Sr"] + (["Designer"] if show_designer else []) + [
         "Collection / Sample", "Vendor", "Qty", "Completed", "Pending", "Status", "Due Date", "Days Left",
-        "Due Status", "Promised To", "Remark"]
+        "Promised To", "Remark"]
     body = []
     for i, (_, r) in enumerate(x.iterrows(), start=1):
         qty_txt = "—" if r["qty_blank"] else f"{r['qty']:,.0f}"
@@ -3168,7 +3168,6 @@ def ff_item_table(x, show_designer=False, height=None, total_label="TARGET"):
             f"<td style='text-align:left'>{_ff_chip(r['status'], sc.get(r['status'], COLORS['slate']))}</td>",
             f"<td>{due_txt}</td>",
             f'<td class="{_ff_days_class(r)}">{_esc(_ff_days_text(r))}</td>',
-            f"<td style='text-align:left'>{_ff_chip(r['due_bucket'], dc[r['due_bucket']])}</td>",
             f"<td style='text-align:left'>{_esc(r['to'])}</td>",
             f"<td style='text-align:left;white-space:normal;min-width:150px'>{_esc(r['remark'])}</td>"]
         body.append("<tr>" + "".join(cells) + "</tr>")
@@ -3177,7 +3176,7 @@ def ff_item_table(x, show_designer=False, height=None, total_label="TARGET"):
     tot = (f'<tr class="tot"><td>{_esc(total_label)}</td>' + "<td></td>" * (2 + pad)
            + f"<td>{s['Target Qty']:,.0f}</td><td>{s['Completed']:,.0f}</td><td>{s['Pending']:,.0f}</td>"
            + f"<td style='text-align:left'>{s['Done %']:.0f}% done · {s['Items Done']}/{s['Items']} items</td>"
-           + "<td></td>" + f"<td>{s['Overdue Items']} overdue</td>" + "<td></td>" * 3 + "</tr>")
+           + "<td></td>" + f"<td>{s['Overdue Items']} overdue</td>" + "<td></td>" * 2 + "</tr>")
     style = f' style="max-height:{int(height)}px"' if height else ""
     head = "".join(f"<th style='min-width:36px;text-align:center'>{_esc(h)}</th>" if h == "Sr" else f"<th>{_esc(h)}</th>"
                    for h in heads)
@@ -3331,7 +3330,7 @@ def _ff_body(sheet_name, cfg, tab):
     if d.empty:
         notice(f"'{tab}' tab me data nahi mila. Expected: row 1 = header (Designer, Team, Collection / Sample, Vendor, "
                "Season, Qty Promised, Completed, Pending, Status, Due Date ...), row 2 se data.", "warning")
-        _ff_visits_section(va, vb, vtab, today)
+        _ff_visits_chart(va, vb, vtab)
         return
 
     team_order = sorted(d["team"].unique(), key=lambda t: (t.startswith("("), t))
@@ -3361,7 +3360,6 @@ def _ff_body(sheet_name, cfg, tab):
 
     x = flt()
     x_nd = flt(skip=("designer",))       # designer comparison: all designers
-    x_nt = flt(skip=("team",))           # team comparison: all teams
     st.caption(f"Aaj: {today.strftime('%d %b %Y')}  ·  Pending = Qty Promised − Completed  ·  Overdue = Due Date nikal "
                "gayi aur Status 'Complete' nahi (sheet wala rule)  ·  Days Left = Due Date − aaj.")
 
@@ -3390,26 +3388,8 @@ def _ff_body(sheet_name, cfg, tab):
         badge("📊 Key Performance Indicators")
         metrics(tiles)
 
-        # ---- needs attention ----
-        if s["Overdue Items"]:
-            od = x[x["is_overdue"]].sort_values("days_overdue", ascending=False)
-            names = ", ".join(f"{r['designer']} – {r['item']} ({int(r['days_overdue'])}d)" for _, r in od.head(4).iterrows())
-            notice(f"{s['Overdue Items']} sample(s) ki promised date nikal chuki hai ({fmt(s['Overdue Pcs'])} pcs pending): "
-                   f"{names}{' …' if len(od) > 4 else ''}", "error")
-        if s["Due ≤ 3 Days"]:
-            notice(f"{s['Due ≤ 3 Days']} sample(s) agle 3 din me due hain ({fmt(soon_pcs)} pcs).", "warning")
-        if not s["Overdue Items"] and not s["Due ≤ 3 Days"]:
-            notice("Koi sample overdue nahi hai aur agle 3 din me koi due nahi hai.", "success")
-        if not vs.empty:
-            miss = int(vs["Missed / Not Marked"].sum())
-            notp = vs[vs["Not Planned Yet"] > 0]
-            if miss:
-                notice(f"Visits & Meetings: {miss} activity ki date nikal gayi par sheet me Done ('X') mark nahi hai.",
-                       "warning")
-            if len(notp):
-                notice("Is mahine abhi tak plan nahi hua: " + ", ".join(notp["Activity"]) + ".", "warning")
 
-        # ---------------- designer-wise target vs completed (table + horizontal graph) ----------------
+        # ================= 1) TABLE + CHART: designer-wise target vs completed =================
         st.markdown("---")
         badge("👩‍🎨 Designer-wise Target vs Completed")
         st.caption("Designer filter yahan apply nahi hota taaki sab designers ki tulna ho sake; baaki filters apply hote "
@@ -3449,190 +3429,67 @@ def _ff_body(sheet_name, cfg, tab):
             chart(fig, "Designer-wise Target vs Completed (Pcs)", max(420, 34 * len(o) + 140), ns="ff",
                   subtitle="Halki blue bar = Target · hari bar = Completed · % = Done %")
 
-        # ---------------- team comparison ----------------
+        # ================= 2) TABLE: every sample, most urgent first =================
         st.markdown("---")
-        badge("👥 Team Comparison")
-        st.caption("Team filter yahan apply nahi hota (sab teams ki tulna); baaki filters apply hote hain.")
-        tg = ff_group(x_nt, "team", "Team", [t for t in team_order if t in set(x_nt["team"])])
-        tg.insert(1, "Designers", tg["Team"].map(x_nt.groupby("team")["designer"].nunique()))
-        tcols = ["Team", "Designers", "Items", "Target Qty", "Completed", "Pending", "Done %", "Overdue Items",
-                 "Due ≤ 3 Days"]
-        ttbl = with_total(tg[tcols], "Team", pct=("Done %", "Completed", "Target Qty"))
-        ttbl.loc[ttbl["Team"] == "TOTAL", "Designers"] = x_nt["designer"].nunique()
-        c1, c2 = st.columns([1.5, 1], gap="medium")
-        with c1:
-            table_with_download(ttbl, "flo_future_team", pct_cols=("Done %",), rate_cols=("Done %",),
-                                rate_fn=ff_rate_class, key_col="Target Qty", sort=False)
-        with c2:
-            fig = go.Figure()
-            for name, colname, color in (("Target", "Target Qty", COLORS["blue"]), ("Completed", "Completed", COLORS["green"]),
-                                         ("Pending", "Pending", COLORS["amber"])):
-                fig.add_trace(go.Bar(name=name, x=list(tg["Team"]), y=tg[colname], marker_color=color,
-                                     text=[fmt(v) for v in tg[colname]], textposition="outside", cliponaxis=False,
-                                     hovertemplate="%{x}<br>" + name + ": %{y:,.0f} pcs<extra></extra>"))
-            fig.update_layout(barmode="group")
-            fig.update_xaxes(title="")
-            fig.update_yaxes(title="Pcs")
-            chart(fig, "Team: Target vs Completed vs Pending (Pcs)", 360, ns="ff",
-                  subtitle="Done %: " + " · ".join(f"{t} {p:.0f}%" for t, p in zip(tg["Team"], tg["Done %"])))
+        badge("📋 Sample Detail (sab items · sabse urgent upar)")
+        st.caption("Upar ke saare filters yahan lagte hain - ek designer chuno to uski poori list. "
+                   "Days Left: 🔴 late  🟡 0-3 din  🟢 3+ din / done.")
+        rank = x["due_bucket"].map({b: i for i, b in enumerate(FF_DUE_BUCKETS)})
+        ff_item_table(x.assign(_r=rank).sort_values(["_r", "days_left", "designer"], na_position="last"),
+                      show_designer=True, height=620, total_label="TOTAL")
+        full = _ff_export(x)
+        st.download_button("⬇️ Download CSV", full.to_csv(index=False).encode("utf-8-sig"),
+                           file_name="flo_future_samples.csv", mime="text/csv", key="dl_ff_samples")
 
-        # ---------------- overdue & due soon ----------------
-        st.markdown("---")
-        badge("🚨 Overdue & Due Soon (next 7 days)")
-        urgent = x[x["due_bucket"].isin(["Overdue", "Due Today", "Due in 1-3 Days", "Due in 4-7 Days"])]
-        c1, c2 = st.container(), st.container()
-        with c1:
-            if urgent.empty:
-                notice("Agle 7 din me koi sample due nahi hai aur koi overdue nahi hai.", "success")
-            else:
-                ff_item_table(urgent.sort_values(["days_left", "designer"]), show_designer=True, height=430,
-                              total_label="TOTAL")
-                st.caption("Sabse purana overdue upar. Days Left: 🔴 late  🟡 0-3 din  🟢 3+ din / done.")
-        with c2:
-            tl = x[~x["is_complete"] & x["due"].notna()]
-            title = "Pending Pcs by Due Date"
-            if tl.empty:
-                empty_card(title, "Pending samples me due date nahi hai.", ns="ff")
-            else:
-                dcol = ff_due_colors()
-                g = tl.groupby(["due", "due_bucket"], as_index=False).agg(pcs=("pending", "sum"), items=("item", "size"))
-                fig = go.Figure()
-                for bkt in FF_OPEN_BUCKETS:
-                    gb = g[g["due_bucket"] == bkt]
-                    if not gb.empty:
-                        fig.add_trace(go.Bar(name=bkt, x=gb["due"], y=gb["pcs"], marker_color=dcol[bkt],
-                                             customdata=gb["items"],
-                                             hovertemplate="%{x|%d %b %Y}<br>%{y:,.0f} pcs · %{customdata} items"
-                                                           "<extra>" + bkt + "</extra>"))
-                fig.add_shape(type="line", x0=today, x1=today, y0=0, y1=1, yref="paper",
-                              line=dict(color=PLOT_TEXT, width=2, dash="dot"))
-                fig.add_annotation(x=today, y=0.98, yref="paper", text=" Today", showarrow=False, yanchor="top",
-                                   xanchor="left", font=dict(color=PLOT_TEXT, size=11))
-                span = (g["due"].max() - min(g["due"].min(), today)).days
-                fig.update_layout(barmode="stack", bargap=0.25)
-                fig.update_xaxes(title="", tickformat="%d %b", **({"dtick": 86400000.0} if span <= 31 else {}))
-                fig.update_yaxes(title="Pending Pcs")
-                chart(fig, title, 380, ns="ff", subtitle="Dotted line = aaj · laal = date nikal gayi")
-
-    # ---------------- visits & meetings ----------------
-    _ff_visits_section(va, vb, vtab, today, vs)
-
-    if not x.empty:
-        # ---------------- designer wise detail (collapsed) ----------------
-        st.markdown("---")
-        badge("📋 Designer Wise Detail (sheet ke 'Designer Wise' tab jaisa · kholne ke liye click karein)")
-        for team in [t for t in team_order if t in set(x["team"])]:
-            for name in [n for n in des_order if n in set(x.loc[x["team"] == team, "designer"])]:
-                g = x[(x["designer"] == name) & (x["team"] == team)]
-                gs = ff_stats(g)
-                flag = "🔴" if gs["Overdue Items"] else ("🟡" if gs["Due ≤ 3 Days"] else "🟢")
-                label = (f"{flag} {name.upper()} · {team} · Target {fmt(gs['Target Qty'])} · Done {fmt(gs['Completed'])} "
-                         f"({gs['Done %']:.0f}%) · Pending {fmt(gs['Pending'])} · Overdue {gs['Overdue Items']}")
-                with st.expander(label, expanded=False):
-                    ff_item_table(g.sort_values(["due", "item"], na_position="last"))
-
-    _ff_quality(d, tab)
+    # ================= 3) CHART: visits & meetings =================
+    _ff_visits_chart(va, vb, vtab, vs)
 
 
-def _ff_visits_section(va, vb, vtab, today, vs=None):
+def _ff_export(x):
+    return pd.DataFrame({
+        "Sheet Row": x.index, "Designer": x["designer"].values, "Team": x["team"].values,
+        "Collection / Sample": x["item"].values, "Vendor": x["vendor"].values, "Season": x["season"].values,
+        "Qty Promised": np.where(x["qty_blank"], np.nan, x["qty"]), "Completed": x["done"].values,
+        "Pending": x["pending"].values, "Status": x["status"].values, "Due Date": _ff_date(x["due"]).values,
+        "Days Left": x["days_left"].values, "Due Status": x["due_bucket"].values, "Promised To": x["to"].values,
+        "Remark": x["remark"].values})
+
+
+def _ff_visits_chart(va, vb, vtab, vs=None):
+    """One chart: per activity -> Done / Missed (not marked) / Upcoming / Not planned yet. Hover lists the activities."""
     st.markdown("---")
-    badge("🗓️ Visits & Meetings (Promised Activities)")
+    badge("🗓️ Visits & Meetings (is mahine)")
     if vtab is None or vb.empty:
         notice("'Visits & Meetings' tab nahi mila ya usme 'Causative Milestone' blocks nahi mile.", "warning")
         return
     vs = vs if vs is not None and not vs.empty else ff_visit_summary(va, vb)
-    st.caption("Done = 'Complete' column me 'X' ya STATUS 'Done'.  Missed / Not Marked = date nikal gayi par Done mark "
-               "nahi.  Required = sheet ka rule (Market / Store / Surat 1 baar, Factory 2 baar, Meetings jitni plan hain).")
-    c1, c2 = st.columns([1.6, 1], gap="medium")
-    with c1:
-        vt = vs.copy()
-        tot = {"Activity": "TOTAL", **{k: vt[k].sum() for k in vt.columns if k not in ("Activity", "Done %")}}
-        tot["Done %"] = safe_div_pct(tot["Done"], tot["Required (Month)"])
-        vt = pd.concat([vt, pd.DataFrame([tot])], ignore_index=True)
-        table_with_download(vt, "flo_future_visits_summary", pct_cols=("Done %",), rate_cols=("Done %",),
-                            rate_fn=ff_rate_class, key_col="Required (Month)", sort=False)
-    with c2:
-        o = vs.iloc[::-1]
-        vc = ff_visit_colors()
-        fig = go.Figure()
-        for name, colname, color in (("Done", "Done", vc["Done"]), ("Missed / Not Marked", "Missed / Not Marked",
-                                                                       vc["Missed / Not Marked"]),
-                                     ("Upcoming", "Upcoming", vc["Upcoming"]),
-                                     ("Not Planned Yet", "Not Planned Yet", COLORS["slate"])):
-            fig.add_trace(go.Bar(name=name, y=list(o["Activity"]), x=o[colname], orientation="h", marker_color=color,
-                                 hovertemplate="%{y}<br>" + name + ": %{x}<extra></extra>"))
-        fig.update_layout(barmode="stack", legend_traceorder="normal")
-        fig.update_xaxes(title="Count", dtick=1)
-        fig.update_yaxes(title="")
-        chart(fig, "Required vs Done (this month)", max(330, 46 * len(o) + 120), ns="ff")
-    if va.empty:
-        notice("Abhi koi visit / meeting plan nahi hai.", "warning")
-        return
     vc = ff_visit_colors()
-    order = {s: i for i, s in enumerate(FF_VISIT_STATES)}
-    va = va.assign(_o=va["state"].map(order)).sort_values(["_o", "date"])
-    rows = []
-    for _, r in va.iterrows():
-        date_txt = r["date"].strftime("%d-%b-%y (%a)") if pd.notna(r["date"]) else "—"
-        dl = r["days_left"]
-        if r["state"] in ("Upcoming", "Today") and pd.notna(dl):
-            when = "Aaj" if int(dl) == 0 else f"{int(dl)} din baad"
-        elif r["state"] == "Missed / Not Marked" and pd.notna(dl):
-            when = f"{-int(dl)} din pehle"
-        else:
-            when = ""
-        rows.append("<tr>" + "".join([
-            f"<td style='text-align:left;font-weight:600'>{_esc(r['type'])}</td>",
-            f"<td style='text-align:left;white-space:normal;min-width:180px'>{_esc(r['action'])}</td>",
-            f"<td style='text-align:left'>{_esc(r['freq'])}</td>",
-            f"<td style='text-align:left'>{_esc(r['by'])}</td>",
-            f"<td style='text-align:left'>{_esc(r['to'])}</td>",
-            f"<td>{_esc(date_txt)}</td>",
-            f"<td style='text-align:left'>{_ff_chip(r['state'], vc.get(r['state'], COLORS['slate']))}</td>",
-            f"<td>{_esc(when)}</td>",
-            f"<td style='text-align:left;white-space:normal'>{_esc(r['remark'])}</td>"]) + "</tr>")
-    heads = ["Activity", "Promised Action", "Frequency", "By Whom", "To Whom", "Date", "Status", "When", "Remark"]
-    _html('<div class="tbl-wrap" style="max-height:420px"><table><thead><tr>'
-          + "".join(f"<th>{h}</th>" for h in heads) + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>")
 
+    def names(vtype, states):
+        if va.empty:
+            return ""
+        g = va[(va["type"] == vtype) & va["state"].isin(states)].sort_values("date")
+        return "<br>".join(f"• {r['action']} · {r['by']} · "
+                           f"{r['date'].strftime('%d %b') if pd.notna(r['date']) else 'no date'}" for _, r in g.iterrows())
 
-def _ff_quality(d, tab):
-    """Cross-checks the dashboard maths with the sheet's own Pending / Overdue columns and lists rows to fix."""
-    st.markdown("---")
-    calc_pen, sheet_pen = float(d["pending"].sum()), float(d["pending_sheet"].sum())
-    calc_od, sheet_od = int(d["is_overdue"].sum()), int(d["overdue_sheet"].sum())
-    match = abs(calc_pen - sheet_pen) < 0.5 and calc_od == sheet_od
-    issues = {}
-    for mask, why in ((d["qty_blank"], "Qty Promised khaali"),
-                      (d["due"].isna() & ~d["is_complete"], "Due Date khaali"),
-                      (~d["qty_blank"] & (d["done"] > d["qty"]), "Completed > Qty"),
-                      ((d["status"] != "Complete") & ~d["qty_blank"] & (d["qty"] > 0) & (d["done"] >= d["qty"]),
-                       "Sab pcs done par Status Complete nahi"),
-                      (d["status"] == "Not Updated", "Status update nahi hua")):
-        for r in d[mask].index:
-            issues.setdefault(r, []).append(why)
-    key = d["item"].str.upper().str.replace(r"\s+", " ", regex=True).str.strip()
-    dup = d.groupby(key)["designer"].nunique()
-    for k in dup[dup > 1].index:
-        for r in d[key == k].index:
-            issues.setdefault(r, []).append("Same item 2+ designers ke paas (double count)")
-    head = (f"🧪 Data Check · {'✅ sheet se match' if match else '⚠ sheet se farq'} · "
-            f"{len(issues)} row(s) check karein")
-    with st.expander(head, expanded=False):
-        notice(f"Pending (dashboard): {fmt(calc_pen)} pcs vs sheet: {fmt(sheet_pen)} pcs  ·  "
-               f"Overdue (dashboard): {calc_od} vs sheet: {sheet_od}", "success" if match else "warning")
-        if not issues:
-            notice("Koi missing / galat entry nahi mili.", "success")
-            return
-        counts = pd.Series([w for ws in issues.values() for w in ws]).value_counts()
-        st.caption(" · ".join(f"{k}: {v}" for k, v in counts.items()))
-        sub = d.loc[sorted(issues)]
-        b = pd.DataFrame({"Location": [f"{tab} · row {r}" for r in sub.index], "Designer": sub["designer"].values,
-                          "Collection / Sample": sub["item"].values,
-                          "Qty": np.where(sub["qty_blank"], np.nan, sub["qty"]), "Completed": sub["done"].values,
-                          "Status": sub["status"].values, "Due Date": _ff_date(sub["due"]).values,
-                          "Issue": ["; ".join(issues[r]) for r in sub.index]})
-        show_table(b, height=360)
+    o = vs.iloc[::-1]
+    fig = go.Figure()
+    for name, colname, color, states in (
+            ("Done", "Done", vc["Done"], ["Done"]),
+            ("Missed / Not Marked", "Missed / Not Marked", vc["Missed / Not Marked"], ["Missed / Not Marked"]),
+            ("Upcoming", "Upcoming", vc["Upcoming"], ["Upcoming", "Today"]),
+            ("Not Planned Yet", "Not Planned Yet", COLORS["slate"], [])):
+        fig.add_trace(go.Bar(name=name, y=list(o["Activity"]), x=o[colname], orientation="h", marker_color=color,
+                             text=[int(v) if v else "" for v in o[colname]], textposition="inside",
+                             customdata=[names(a, states) for a in o["Activity"]],
+                             hovertemplate="<b>%{y}</b><br>" + name + ": %{x}<br>%{customdata}<extra></extra>"))
+    fig.update_layout(barmode="stack", legend_traceorder="normal")
+    fig.update_xaxes(title="Count", dtick=1)
+    fig.update_yaxes(title="")
+    done, req = int(vs["Done"].sum()), int(vs["Required (Month)"].sum())
+    chart(fig, "Visits & Meetings: Required vs Done", max(320, 52 * len(o) + 130), ns="ff",
+          subtitle=f"{done} / {req} done · bar par mouse le jao to naam aur date dikhenge · "
+                   "Done = 'X' ya STATUS 'Done' · Missed = date nikal gayi par mark nahi")
 
 
 # -----------------------------------------------------------------------------
