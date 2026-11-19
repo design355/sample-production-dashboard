@@ -3425,57 +3425,6 @@ def _ff_body(sheet_name, cfg, tab):
     _ff_visits_chart(va, vb, vtab, vs)
 
 
-def _ff_designer_chart(dsc, x_nd):
-    """One horizontal stacked bar per designer. Full bar = Target Qty, split into
-    Completed | Pending: overdue | Pending: due in 0-3 days | Pending: due later | Pending: no due date.
-    Label at the end: done / target · Done % · overdue / due-soon items. Hover shows everything for that designer."""
-    if dsc.empty:
-        notice("Selected filters ke liye data nahi hai.")
-        return
-    seg = {"Overdue": ["Overdue"], "Due in 0-3 Days": ["Due Today", "Due in 1-3 Days"],
-           "Due Later": ["Due in 4-7 Days", "Due Later (> 7 Days)"], "No Due Date": ["No Due Date"]}
-    pen = {k: x_nd[x_nd["due_bucket"].isin(v)].groupby("designer")["pending"].sum() for k, v in seg.items()}
-    o = dsc.sort_values(["Target Qty", "Designer"], ascending=[True, False]).reset_index(drop=True)
-    names = list(o["Designer"])
-    ylab = [f"<b>{n}</b> · {t}" for n, t in zip(names, o["Team"])]
-    parts = {k: o["Designer"].map(v).fillna(0.0).to_numpy() for k, v in pen.items()}
-    hover = [(f"<b>{r['Designer']}</b> · {r['Team']}<br>Target: {fmt(r['Target Qty'])} pcs ({r['Items']} items)"
-              f"<br>Completed: {fmt(r['Completed'])} pcs ({r['Done %']:.1f}%)<br>Pending: {fmt(r['Pending'])} pcs"
-              f"<br>Overdue: {r['Overdue Items']} items · {fmt(parts['Overdue'][i])} pcs"
-              f"<br>Due in 0-3 days: {r['Due ≤ 3 Days']} items · {fmt(parts['Due in 0-3 Days'][i])} pcs"
-              f"<br>Nearest open due: {r['Nearest Open Due']}") for i, r in o.iterrows()]
-    colors = {"Completed": COLORS["green"], "Overdue": COLORS["red"], "Due in 0-3 Days": COLORS["orange"],
-              "Due Later": _hex_to_rgba(COLORS["blue"], 0.55), "No Due Date": _hex_to_rgba(COLORS["slate"], 0.55)}
-    fig = go.Figure()
-    series = [("Completed", o["Completed"].to_numpy())] + [(f"Pending · {k}", parts[k]) for k in seg]
-    for name, vals in series:
-        key = name.replace("Pending · ", "")
-        fig.add_trace(go.Bar(name=name, y=ylab, x=vals, orientation="h", marker_color=colors[key],
-                             marker_line=dict(width=0), text=[fmt(v) if v >= 1 else "" for v in vals],
-                             textposition="inside", insidetextanchor="middle",
-                             textfont=dict(color="#ffffff", size=11), customdata=hover,
-                             hovertemplate="%{customdata}<extra>" + name + "</extra>"))
-    # end label: done / target · % · alerts
-    top = float(np.maximum(o["Target Qty"], o["Completed"] + o["Pending"]).max())
-    for i, r in o.iterrows():
-        tail = f"{fmt(r['Completed'])}/{fmt(r['Target Qty'])} · {r['Done %']:.0f}%"
-        if r["Overdue Items"]:
-            tail += f"  🔴 {r['Overdue Items']} late"
-        if r["Due ≤ 3 Days"]:
-            tail += f"  🟠 {r['Due ≤ 3 Days']} due soon"
-        end = max(float(r["Target Qty"]), float(r["Completed"] + r["Pending"]))
-        fig.add_annotation(x=end, y=ylab[i], text=tail, showarrow=False, xanchor="left", xshift=6,
-                           font=dict(size=11, color=PLOT_TEXT))
-    fig.update_layout(barmode="stack", bargap=0.28, legend_traceorder="normal")
-    fig.update_xaxes(title="Pcs (poori bar = Target)", range=[0, top * 1.38 + 1])
-    fig.update_yaxes(title="")
-    tot = dsc[["Target Qty", "Completed", "Pending"]].sum()
-    chart(fig, "Designer-wise Target vs Completed (Pcs)", max(440, 40 * len(o) + 150), ns="ff",
-          subtitle=f"Total {fmt(tot['Completed'])} / {fmt(tot['Target Qty'])} done "
-                   f"({safe_div_pct(tot['Completed'], tot['Target Qty']):.1f}%) · hari = done · laal = date nikal gayi · "
-                   "orange = 3 din me due · blue = baad me due · grey = due date nahi · mouse le jao to poori detail")
-
-
 def _ff_export(x):
     return pd.DataFrame({
         "Sheet Row": x.index, "Designer": x["designer"].values, "Team": x["team"].values,
@@ -3486,8 +3435,54 @@ def _ff_export(x):
         "Remark": x["remark"].values})
 
 
+def _ff_designer_chart(dsc, x_nd):
+    """Vertical stacked column per designer. Full column = Target Qty =
+    Completed (green) + Pending overdue (red) + Pending due in 0-3 days (orange) + Other pending (light blue).
+    Label on top: Done % and done / target. Hover shows the full detail of that designer."""
+    if dsc.empty:
+        notice("Selected filters ke liye data nahi hai.")
+        return
+    o = dsc.sort_values(["Target Qty", "Designer"], ascending=[False, True]).reset_index(drop=True)
+    od = o["Designer"].map(x_nd[x_nd["due_bucket"] == "Overdue"].groupby("designer")["pending"].sum()).fillna(0.0)
+    soon = o["Designer"].map(x_nd[x_nd["due_bucket"].isin(["Due Today", "Due in 1-3 Days"])]
+                             .groupby("designer")["pending"].sum()).fillna(0.0)
+    rest = (o["Pending"] - od - soon).clip(lower=0)
+    xlab = [f"<b>{n}</b><br>{t}" for n, t in zip(o["Designer"], o["Team"])]
+    hover = [(f"<b>{r['Designer']}</b> · {r['Team']}<br>Target: {fmt(r['Target Qty'])} pcs ({r['Items']} items)"
+              f"<br>Completed: {fmt(r['Completed'])} pcs ({r['Done %']:.1f}%)<br>Pending: {fmt(r['Pending'])} pcs"
+              f"<br>Overdue: {r['Overdue Items']} items · {fmt(od[i])} pcs"
+              f"<br>Due in 0-3 days: {r['Due ≤ 3 Days']} items · {fmt(soon[i])} pcs"
+              f"<br>Nearest open due: {r['Nearest Open Due']}") for i, r in o.iterrows()]
+    fig = go.Figure()
+    for name, vals, color in (("Completed", o["Completed"], COLORS["green"]),
+                              ("Pending · Overdue", od, COLORS["red"]),
+                              ("Pending · Due in 0-3 Days", soon, COLORS["orange"]),
+                              ("Pending · Baad me due / No date", rest, _hex_to_rgba(COLORS["blue"], 0.35))):
+        fig.add_trace(go.Bar(name=name, x=xlab, y=vals, marker_color=color, marker_line=dict(width=0),
+                             text=[fmt(v) if v >= 1 else "" for v in vals], textposition="inside",
+                             insidetextanchor="middle", textangle=0, textfont=dict(size=11),
+                             customdata=hover, hovertemplate="%{customdata}<extra>" + name + "</extra>"))
+    top = float(np.maximum(o["Target Qty"], o["Completed"] + o["Pending"]).max())
+    for i, r in o.iterrows():
+        h = max(float(r["Target Qty"]), float(r["Completed"] + r["Pending"]))
+        color = COLORS["green"] if r["Done %"] >= 80 else (COLORS["amber"] if r["Done %"] >= 40 else COLORS["red"])
+        fig.add_annotation(x=xlab[i], y=h, yshift=4, yanchor="bottom", showarrow=False,
+                           text=f"<b>{r['Done %']:.0f}%</b><br>{fmt(r['Completed'])}/{fmt(r['Target Qty'])}",
+                           font=dict(size=11, color=color))
+    fig.update_layout(barmode="stack", bargap=0.32, legend_traceorder="normal", uniformtext_minsize=9,
+                      uniformtext_mode="hide")
+    fig.update_yaxes(title="Pcs (poora column = Target)", range=[0, top * 1.22 + 1])
+    fig.update_xaxes(title="", tickfont=dict(size=11))
+    tot = dsc[["Target Qty", "Completed"]].sum()
+    chart(fig, "Designer-wise Target vs Completed (Pcs)", 470, ns="ff",
+          subtitle=f"Total {fmt(tot['Completed'])} / {fmt(tot['Target Qty'])} done "
+                   f"({safe_div_pct(tot['Completed'], tot['Target Qty']):.1f}%) · upar = Done % aur done/target · "
+                   "mouse le jao to poori detail")
+
+
 def _ff_visits_chart(va, vb, vtab, vs=None):
-    """One chart: per activity -> Done / Missed (not marked) / Upcoming / Not planned yet. Hover lists the activities."""
+    """Vertical grouped columns per activity: Required | Done | Missed (date passed, not marked) | Upcoming.
+    Under each activity: 'x / y done'; above an activity with a problem: a warning. Hover lists names + dates."""
     st.markdown("---")
     badge("🗓️ Visits & Meetings (is mahine)")
     if vtab is None or vb.empty:
@@ -3497,30 +3492,38 @@ def _ff_visits_chart(va, vb, vtab, vs=None):
     vc = ff_visit_colors()
 
     def names(vtype, states):
-        if va.empty:
+        if va.empty or not states:
             return ""
         g = va[(va["type"] == vtype) & va["state"].isin(states)].sort_values("date")
         return "<br>".join(f"• {r['action']} · {r['by']} · "
                            f"{r['date'].strftime('%d %b') if pd.notna(r['date']) else 'no date'}" for _, r in g.iterrows())
 
-    o = vs.iloc[::-1]
+    xlab = [f"<b>{a}</b><br>{int(d_)}/{int(q)} done" for a, d_, q in zip(vs["Activity"], vs["Done"], vs["Required (Month)"])]
     fig = go.Figure()
     for name, colname, color, states in (
+            ("Required", "Required (Month)", _hex_to_rgba(COLORS["slate"], 0.45), []),
             ("Done", "Done", vc["Done"], ["Done"]),
             ("Missed / Not Marked", "Missed / Not Marked", vc["Missed / Not Marked"], ["Missed / Not Marked"]),
-            ("Upcoming", "Upcoming", vc["Upcoming"], ["Upcoming", "Today"]),
-            ("Not Planned Yet", "Not Planned Yet", COLORS["slate"], [])):
-        fig.add_trace(go.Bar(name=name, y=list(o["Activity"]), x=o[colname], orientation="h", marker_color=color,
-                             text=[int(v) if v else "" for v in o[colname]], textposition="inside",
-                             customdata=[names(a, states) for a in o["Activity"]],
-                             hovertemplate="<b>%{y}</b><br>" + name + ": %{x}<br>%{customdata}<extra></extra>"))
-    fig.update_layout(barmode="stack", legend_traceorder="normal")
-    fig.update_xaxes(title="Count", dtick=1)
-    fig.update_yaxes(title="")
+            ("Upcoming", "Upcoming", vc["Upcoming"], ["Upcoming", "Today"])):
+        vals = vs[colname].astype(int)
+        fig.add_trace(go.Bar(name=name, x=xlab, y=vals, marker_color=color,
+                             text=[str(v) if v else "" for v in vals], textposition="outside", cliponaxis=False,
+                             customdata=[names(a, states) for a in vs["Activity"]],
+                             hovertemplate="%{x}<br><b>" + name + ": %{y}</b><br>%{customdata}<extra></extra>"))
+    top = float(vs["Required (Month)"].max()) if len(vs) else 1.0
+    for i, r in vs.iterrows():
+        msg = "⚠ Plan nahi hua" if r["Planned"] == 0 else (
+            f"⚠ {int(r['Missed / Not Marked'])} mark nahi" if r["Missed / Not Marked"] else "")
+        if msg:
+            fig.add_annotation(x=xlab[i], y=float(r["Required (Month)"]), yshift=22, yanchor="bottom",
+                               showarrow=False, text=msg, font=dict(size=11, color=COLORS["red"]))
+    fig.update_layout(barmode="group", bargap=0.3, bargroupgap=0.08)
+    fig.update_yaxes(title="Count", range=[0, top * 1.35 + 1], **({"dtick": 1} if top <= 10 else {}))
+    fig.update_xaxes(title="", tickfont=dict(size=11))
     done, req = int(vs["Done"].sum()), int(vs["Required (Month)"].sum())
-    chart(fig, "Visits & Meetings: Required vs Done", max(320, 52 * len(o) + 130), ns="ff",
-          subtitle=f"{done} / {req} done · bar par mouse le jao to naam aur date dikhenge · "
-                   "Done = 'X' ya STATUS 'Done' · Missed = date nikal gayi par mark nahi")
+    chart(fig, "Visits & Meetings: Required vs Done", 440, ns="ff",
+          subtitle=f"{done} / {req} done · Done = sheet me 'X' ya STATUS 'Done' · Missed = date nikal gayi par mark nahi · "
+                   "bar par mouse le jao to naam aur date")
 
 
 # -----------------------------------------------------------------------------
