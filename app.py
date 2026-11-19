@@ -4058,6 +4058,403 @@ def _hide_splash(ph, t0):
 
 
 # -----------------------------------------------------------------------------
+# 13b. VENDOR RATE DASHBOARD  (NEW tab - "NEW RATE SHEET" vendor fabric rates)
+# -----------------------------------------------------------------------------
+# Data = built-in rate sheet below. Rates change? -> use "Update / Paste New Sheet Data" inside the tab
+# (CSV / JSON upload or paste), or edit _VR_DEFAULT_ROWS to make the change permanent.
+VR_METER_COLS = ['36"', '44"', '60"', '44/36"']     # per-meter rates (by width)
+VR_PC_COL = "Per Pc"                                # per-piece rate (never mixed with per-meter averages)
+VR_PC_MAX = "Per Pc Max"                            # upper end when a piece rate is a range (120/125)
+VR_PRICE_COLS = VR_METER_COLS + [VR_PC_COL]
+VR_STATE_KEY = "vr_rows_json"
+
+# (Vendor, Fabric, 36", 44", 60", 44/36", Per Pc, Per Pc Max)   - None = not offered, 0 = rate pending
+_VR_DEFAULT_ROWS = [
+    ("RV", "CREPE", None, 205, 250, None, None, None),
+    ("RV", "MUL CHANDERI", None, 195, 240, None, None, None),
+    ("RV", "BASIC SILK", None, 170, 195, None, None, None),
+    ("RV", "CLASSIC SILK", None, 175, 200, None, None, None),
+    ("RV", "RUSSIAN SILK", None, 200, 230, None, None, None),
+    ("RV", "CHINON", None, 185, 235, None, None, None),
+    ("RV", "VISCOSE MUSLINE", None, 165, 195, None, None, None),
+    ("RV", "PLAIN ORGENZA", None, 80, 120, None, None, None),
+    ("RV", "PLAIN CREPE", None, 0, 125, None, None, None),
+    ("RV", "PLAIN CHINON", None, 72, 115, None, None, None),
+    ("RV", "ORGANZA PRINTED", None, 185, 235, None, None, None),
+    ("RV", "SUPER COTTON (DIGITAL PRINT)", None, 145, 170, None, None, None),
+    ("RV", "DOBBY", None, None, 200, None, None, None),
+    ("SWAGAT", "REMI SILK", None, 175, 230, None, None, None),
+    ("SWAGAT", "NATURAL CREPE", None, 230, 280, None, None, None),
+    ("SWAGAT", "SAND CREPE", None, 210, 280, None, None, None),
+    ("GOKUL", "N-CREPE", None, 210, 260, None, None, None),
+    ("GOKUL", "MUSLIN", None, 160, 200, None, None, None),
+    ("GOKUL", "DIG. COTTON", None, 160, 200, None, None, None),
+    ("GOKUL", "RFD CREPE", None, None, 120, None, None, None),
+    ("VARSHA", "MUSLINE", None, 165, 200, None, None, None),
+    ("VARSHA", "MUSLINE PRINTED DUPATTA", None, 160, 210, None, None, None),
+    ("VARSHA", "CREPE", None, 232, 295, None, None, None),
+    ("VARSHA", "SANTOON (DYED)", None, 90, None, None, None, None),
+    ("VARSHA", "HAND WORK PR PC", None, None, None, None, 120, None),
+    ("VARSHA", "CREPE HAND WORK PR PC", None, None, None, None, 160, None),
+    ("VARSHA", "MUSLIN PRINT HAND WORK PR PC", None, None, None, None, 120, 125),
+    ("VARSHA", "CHINON DUPATTA MTR", None, 220, 275, None, None, None),
+    ("VIPUL", "MUSLINE", None, 160, 185, None, None, None),
+    ("VIPUL", "CREPE", None, 220, 265, None, None, None),
+    ("VIPUL", "ORGENZA", None, None, 220, None, None, None),
+    ("VIPUL", "RUSSIAN SILK", None, 185, None, None, None, None),
+    ("VIPUL", "CHINON SIFON", None, 180, 230, None, None, None),
+    ("EKTA FABRIC", "CHANDERI DIG. TOP/DUP.", None, None, None, 390, None, None),
+    ("EKTA FABRIC", "LILEN DIG. TOP/DUP.", None, None, None, 435, None, None),
+    ("EKTA FABRIC", "MODAL DAYED DIG. TOP/DUP.", None, None, None, 675, None, None),
+    ("EKTA FABRIC", "MOONGA DIG. TOP/DUP. JAMDANI", None, None, None, 675, None, None),
+    ("EKTA FABRIC", "MOONGA FLEB DIG. TOP/DUP. JAMDANI", None, None, None, 565, None, None),
+    ("VINAYAK", "CREPE", None, 210, 250, None, None, None),
+    ("VINAYAK", "BEMBER RUSSION SILK", None, 250, None, None, None, None),
+    ("VINAYAK", "MUSLIN", None, 145, 180, None, None, None),
+    ("VINAYAK", "MUL CHANDERI", None, None, 225, None, None, None),
+    ("VINAYAK", "ORGENZA (PRINTED)", None, None, 235, None, None, None),
+    ("VINAYAK", "DIG. 60*60 COTTON", None, 135, None, None, None, None),
+    ("VINAYAK", "DIG. VISCOS ORGENZA", 225, None, 220, None, None, None),
+    ("SHREE SANTINATH", "FLEX LILEN", None, None, 132, None, None, None),
+    ("SHREE SANTINATH", "FLEX LILEN DUPATTA (PER PC)", None, None, None, None, 145, None),
+    ("SHREE SANTINATH", "FLEX WRINKLE SWISS", None, None, 142, None, None, None),
+    ("VEDANSHI", "PLAIN ORGENZA", 85, None, 135, None, None, None),
+    ("VEDANSHI", "MUSLIN", 165, None, 200, None, None, None),
+    ("BSK", "MUL CHANDERI", None, 175, 210, None, None, None),
+    ("BSK", "COTTON", None, None, 155, None, None, None),
+    ("K THREE PLUS", "CHIKU CHANDERI", 73, None, 85, None, None, None),
+    ("K THREE PLUS", "MUSLIN", None, None, None, None, None, None),
+    ("K THREE PLUS", "COTTON SILK", None, None, None, None, None, None),
+    ("K THREE PLUS", "GAJJI SILK", None, None, None, None, None, None),
+]
+_VR_KEYS = ["Vendor", "Fabric"] + VR_PRICE_COLS + [VR_PC_MAX]
+
+
+def vr_default_records():
+    return [dict(zip(_VR_KEYS, r)) for r in _VR_DEFAULT_ROWS]
+
+
+def vr_category(fabric, has_pc=False):
+    """Clean fabric group for filters (spelling variations -> one category)."""
+    t = str(fabric).upper()
+    if has_pc or re.search(r"HAND\s*WORK|TOP\s*/\s*DUP|\bP(ER|R)\s*PC\b", t):
+        return "Hand Work / Dupatta"
+    for pattern, name in (
+        (r"RUSSI", "Russian Silk"), (r"CHANDERI", "Mul Chanderi"), (r"CHINON", "Chinon"),
+        (r"ORGENZA|ORGANZA", "Organza"), (r"MUSLIN", "Muslin"), (r"CREPE", "Crepe"),
+        (r"LILEN|LINEN", "Linen"), (r"SANTOON", "Santoon"), (r"SILK", "Silk"), (r"COTTON", "Cotton"),
+    ):
+        if re.search(pattern, t):
+            return name
+    return "Other"
+
+
+def _vr_num(v):
+    """Cell -> (value or None, upper value or None). Handles 120, '₹1,200', 'N/A', '120/125'."""
+    if v is None:
+        return None, None
+    if isinstance(v, (int, float, np.integer, np.floating)):
+        return (None, None) if pd.isna(v) else (float(v), None)
+    s = str(v).replace("₹", "").replace(",", "").strip()
+    nums = re.findall(r"\d+(?:\.\d+)?", s)
+    if not nums:
+        return None, None
+    return float(nums[0]), (float(nums[1]) if len(nums) > 1 else None)
+
+
+def vr_build(records):
+    """records -> tidy DataFrame (0 / blank rates are kept out of every average and min / max)."""
+    out = []
+    for r in records:
+        vendor, fabric = str(r.get("Vendor", "")).strip(), str(r.get("Fabric", "")).strip()
+        if not vendor or not fabric:
+            continue
+        vals, pending = {}, []
+        for c in VR_PRICE_COLS:
+            v, _hi = _vr_num(r.get(c))
+            if v == 0:
+                pending.append(c)
+                v = None
+            vals[c] = v
+        pc_max = _vr_num(r.get(VR_PC_MAX))[0] or _vr_num(r.get(VR_PC_COL))[1]
+        if all(v is None for v in vals.values()) and not pending:
+            pending = ["ALL"]                      # every rate blank
+        status = "✅ OK"
+        if pending:
+            status = "⚠️ Pending / N/A" + ("" if pending == ["ALL"] else f" ({', '.join(pending)})")
+        note = ""
+        if vals[VR_PC_COL] and pc_max and pc_max != vals[VR_PC_COL]:
+            note = f"Range ₹{vals[VR_PC_COL]:,.0f}–{pc_max:,.0f} per pc"
+        row = {"Vendor": vendor, "Fabric": fabric,
+               "Category": vr_category(fabric, has_pc=vals[VR_PC_COL] is not None)}
+        row.update({c: (np.nan if vals[c] is None else vals[c]) for c in VR_PRICE_COLS})
+        row.update({VR_PC_MAX: (np.nan if not pc_max else pc_max), "Pending Cells": len(pending),
+                    "Status": status, "Note": note})
+        out.append(row)
+    cols = ["Vendor", "Fabric", "Category"] + VR_PRICE_COLS + [VR_PC_MAX, "Pending Cells", "Status", "Note"]
+    return pd.DataFrame(out, columns=cols)
+
+
+def _vr_header(h):
+    t = str(h).strip().lower()
+    for ch in ('"', "”", "″", "'", "inches", "inch", "width", " "):
+        t = t.replace(ch, "")
+    if t in ("vendor", "vendorname", "supplier", "party"):
+        return "Vendor"
+    if t in ("fabric", "fabricname", "item", "fabricitem", "quality", "name"):
+        return "Fabric"
+    if t in ("36", "44", "60"):
+        return t + '"'
+    if t in ("44/36", "36/44"):
+        return '44/36"'
+    if t in ("perpcmax", "perpiecemax", "pcmax", "maxperpc"):
+        return VR_PC_MAX
+    if t in ("perpc", "perpiece", "pc", "piece", "perpcrate", "rateperpc"):
+        return VR_PC_COL
+    return None
+
+
+def vr_parse_text(text):
+    """CSV (comma / tab - straight copy from Google Sheet works) or JSON text -> list of record dicts."""
+    import io
+    import json
+    text = (text or "").strip().lstrip("\ufeff")
+    if not text:
+        raise ValueError("Koi data nahi mila.")
+    if text[0] in "[{":
+        data = json.loads(text)
+        if isinstance(data, dict):
+            data = next((v for v in data.values() if isinstance(v, list)), None)
+        if not isinstance(data, list):
+            raise ValueError("JSON me records ki list honi chahiye.")
+        df = pd.DataFrame(data)
+    else:
+        df = pd.read_csv(io.StringIO(text), sep=None, engine="python", dtype=str, keep_default_na=False)
+    df = df.rename(columns={c: _vr_header(c) for c in df.columns if _vr_header(c)})
+    df = df.loc[:, ~df.columns.duplicated()]
+    if "Vendor" not in df.columns or "Fabric" not in df.columns:
+        raise ValueError("Columns 'Vendor' aur 'Fabric' zaroori hain (template download karke dekhein).")
+    if not any(c in df.columns for c in VR_PRICE_COLS):
+        raise ValueError("Kam se kam ek rate column chahiye: 36, 44, 60, 44/36 ya Per Pc.")
+    df = df.astype(object).where(pd.notna(df), None)
+    recs = []
+    for r in df.to_dict("records"):
+        recs.append({k: (r.get(k) if r.get(k) not in ("", None) else None) for k in _VR_KEYS})
+    if not vr_build(recs).shape[0]:
+        raise ValueError("Koi valid row nahi mili.")
+    return recs
+
+
+def vr_template_csv():
+    return pd.DataFrame(vr_default_records())[_VR_KEYS].to_csv(index=False).encode("utf-8-sig")
+
+
+def _vr_current_records():
+    import json
+    raw = st.session_state.get(VR_STATE_KEY)
+    if raw:
+        try:
+            return json.loads(raw), True
+        except Exception:
+            pass
+    return vr_default_records(), False
+
+
+def vr_filter(d, vendor, cat, width, query):
+    x = d
+    if vendor != "All":
+        x = x[x["Vendor"] == vendor]
+    if cat != "All":
+        x = x[x["Category"] == cat]
+    if width == 'Has 44"':
+        x = x[x['44"'].notna() | x['44/36"'].notna()]
+    elif width == 'Has 60"':
+        x = x[x['60"'].notna()]
+    elif width == 'Has 36"':
+        x = x[x['36"'].notna() | x['44/36"'].notna()]
+    elif width == "Per Piece only":
+        x = x[x[VR_PC_COL].notna() & ~x[VR_METER_COLS].notna().any(axis=1)]
+    tokens = [t for t in re.split(r"\s+", str(query or "").lower().strip()) if t]
+    if tokens:
+        hay = (x["Vendor"] + " " + x["Fabric"] + " " + x["Category"]).str.lower()
+        for t in tokens:
+            x = x[hay.loc[x.index].str.contains(re.escape(t))]
+    return x
+
+
+def vr_lowest(x, col):
+    s = x[col].dropna()
+    if s.empty:
+        return "—"
+    i = s.idxmin()
+    return f"₹{s[i]:,.0f} · {x.loc[i, 'Vendor']} · {x.loc[i, 'Fabric']}"
+
+
+def vr_benchmark(x):
+    rows = []
+    for vendor, g in x.groupby("Vendor", sort=False):
+        meter = g[VR_METER_COLS].stack()
+        rows.append({
+            "Vendor": vendor,
+            "Total Items": len(g),
+            'Avg 44" Rate': g['44"'].mean(),
+            'Avg 60" Rate': g['60"'].mean(),
+            "Min Rate": meter.min() if not meter.empty else np.nan,
+            "Max Rate": meter.max() if not meter.empty else np.nan,
+            "Per Pc Items": int(g[VR_PC_COL].notna().sum()),
+            "Pending": int(g["Pending Cells"].sum()),
+        })
+    return pd.DataFrame(rows)
+
+
+def vr_compare(c, widths):
+    """Per vendor: cheapest fabric + rate for every width, plus Best Price badge."""
+    rows = []
+    for vendor, g in c.groupby("Vendor", sort=False):
+        row = {"Vendor": vendor}
+        for w in widths:
+            s = g[w].dropna()
+            if s.empty:
+                row[f"{w} Rate"], row[f"{w} Fabric"] = np.nan, ""
+            else:
+                i = s.idxmin()
+                row[f"{w} Rate"], row[f"{w} Fabric"] = s[i], g.loc[i, "Fabric"]
+        rows.append(row)
+    cmp = pd.DataFrame(rows)
+    best = {w: cmp[f"{w} Rate"].min() for w in widths}
+    cmp["Best Price"] = [
+        " ".join(f"🏆 {w}" for w in widths if pd.notna(r[f"{w} Rate"]) and r[f"{w} Rate"] == best[w])
+        for _, r in cmp.iterrows()
+    ]
+    cmp = cmp.sort_values(f"{widths[0]} Rate", na_position="last", kind="mergesort").reset_index(drop=True)
+    order = ["Vendor"] + [c for w in widths for c in (f"{w} Rate", f"{w} Fabric")] + ["Best Price"]
+    return cmp[order], best
+
+
+# ---------------------------------------------------------------- UI
+def _vr_update_panel(is_custom):
+    import json
+    with st.expander("🔄 Update / Paste New Sheet Data", expanded=False):
+        st.caption('Format: ek flat table - columns **Vendor, Fabric, 36", 44", 60", 44/36", Per Pc** (optional **Per Pc Max**). '
+                   "Rate khali = nahi milta, 0 = Pending. Google Sheet me wahi table select karke copy → neeche paste kar sakte hain.")
+        c1, c2 = st.columns(2)
+        up = c1.file_uploader("CSV / JSON file upload", type=["csv", "json", "txt"], key="_vr_upload")
+        pasted = c2.text_area("Ya data yahan paste karein (CSV / tab-separated / JSON)", height=140, key="vr_paste")
+        b1, b2, b3, b4 = st.columns(4)
+        if b1.button("✅ Apply new data", key="_vr_apply", **STRETCH):
+            try:
+                text = up.getvalue().decode("utf-8-sig") if up is not None else pasted
+                recs = vr_parse_text(text)
+                st.session_state[VR_STATE_KEY] = json.dumps(recs)
+                st.rerun()
+            except ValueError as e:
+                notice(str(e), "error")
+            except Exception as e:                      # bad file / bad JSON
+                notice(f"Data padh nahi paya: {e}", "error")
+        if is_custom and b2.button("↩️ Reset to built-in data", key="_vr_default", **STRETCH):
+            st.session_state.pop(VR_STATE_KEY, None)
+            st.rerun()
+        b3.download_button("⬇️ Template / current data CSV", vr_template_csv() if not is_custom else
+                           pd.DataFrame(_vr_current_records()[0])[_VR_KEYS].to_csv(index=False).encode("utf-8-sig"),
+                           file_name="vendor_rates.csv", mime="text/csv", key="dl_vr_template", **STRETCH)
+        notice("Naya data sirf is session me rehta hai (page reload par built-in data wapas aata hai). "
+               "Permanent karne ke liye CSV download karke code me _VR_DEFAULT_ROWS update karein.", "info")
+
+
+def render_vendor_rate_dashboard():
+    records, is_custom = _vr_current_records()
+    d = vr_build(records)
+    dash_title("💰 Vendor Rate Comparison", chip="📥 Uploaded data" if is_custom else "📋 NEW RATE SHEET")
+    _vr_update_panel(is_custom)
+    if d.empty:
+        notice("Rate data nahi mila.", "warning")
+        return
+
+    # ---- filters -----------------------------------------------------------
+    vendors = ["All"] + list(dict.fromkeys(d["Vendor"]))
+    cats = ["All"] + sorted(d["Category"].unique())
+    widths = ["All", 'Has 44"', 'Has 60"', 'Has 36"', "Per Piece only"]
+    for key, opts in (("vr_vendor", vendors), ("vr_cat", cats), ("vr_width", widths)):
+        if st.session_state.get(key) not in opts:
+            st.session_state[key] = "All"
+    f1, f2, f3, f4 = st.columns([1, 1, 1, 1.3])
+    vendor = f1.selectbox("Vendor", vendors, key="vr_vendor")
+    cat = f2.selectbox("Fabric category", cats, key="vr_cat")
+    width = f3.selectbox("Width availability", widths, key="vr_width")
+    query = f4.text_input("🔍 Search fabric / vendor", key="vr_search", placeholder="e.g. crepe, RV, organza")
+    x = vr_filter(d, vendor, cat, width, query)
+
+    # ---- KPIs ----------------------------------------------------------------
+    badge("Overview")
+    metrics([
+        ("Total Vendors", f"{x['Vendor'].nunique()}"),
+        ("Total Fabric Offerings", f"{len(x)}"),
+        ('Lowest 44" Rate', vr_lowest(x, '44"')),
+        ('Lowest 60" Rate', vr_lowest(x, '60"')),
+        ("Pending / Missing Rates", f"{int(x['Pending Cells'].sum())}"),
+    ])
+    if x.empty:
+        notice("Selected filters ke liye koi fabric nahi mila.", "warning")
+        return
+
+    # ---- side-by-side comparison --------------------------------------------
+    badge("Side-by-Side Fabric Price Comparison")
+    all_cats = sorted(d["Category"].unique())
+    if st.session_state.get("vr_cmp_cat") not in all_cats:
+        st.session_state["vr_cmp_cat"] = "Crepe" if "Crepe" in all_cats else all_cats[0]
+    sel = st.selectbox("Compare fabric category", all_cats, key="vr_cmp_cat",
+                       help="Yeh comparison hamesha saare vendors ke beech hota hai (upar ke Vendor filter se alag).")
+    c = d[d["Category"] == sel]
+    mw = [w for w in VR_METER_COLS if c[w].notna().any()]
+    if mw:
+        cmp, best = vr_compare(c, mw)
+        tiles = []
+        for w in mw:
+            i = c[w].idxmin()
+            tiles.append((f"Cheapest {w}", f"₹{best[w]:,.0f} · {c.loc[i, 'Vendor']} · {c.loc[i, 'Fabric']}"))
+        tiles.append(("Vendors offering", f"{c['Vendor'].nunique()}"))
+        metrics(tiles)
+        long = []
+        for _, r in cmp.iterrows():
+            for w in mw:
+                if pd.notna(r[f"{w} Rate"]):
+                    star = " ★" if r[f"{w} Rate"] == best[w] else ""
+                    long.append({"Vendor": r["Vendor"], "Width": w, "Rate": r[f"{w} Rate"],
+                                 "Label": f"₹{r[f'{w} Rate']:,.0f}{star}"})
+        fig = px.bar(pd.DataFrame(long), x="Vendor", y="Rate", color="Width", barmode="group", text="Label",
+                     color_discrete_sequence=pal(), labels={"Rate": "Rate (₹ / mtr)"})
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        chart(fig, f"{sel}: vendor-wise cheapest rate (★ = Best Price)", height=380, ns="vr")
+        show_table(cmp, money_cols=[f"{w} Rate" for w in mw], sort=False)
+    pc = c[c[VR_PC_COL].notna()].sort_values(VR_PC_COL)
+    if not pc.empty:
+        badge(f"{sel}: per piece rates (alag - per-meter se mix nahi)")
+        t = pc[["Vendor", "Fabric", VR_PC_COL]].rename(columns={VR_PC_COL: "Rate / Pc"}).reset_index(drop=True)
+        t["Range"] = [n for n in pc["Note"]]
+        t["Best Price"] = ["🏆 Best Price" if v == t["Rate / Pc"].min() else "" for v in t["Rate / Pc"]]
+        show_table(t, money_cols=["Rate / Pc"], sort=False)
+    if not mw and pc.empty:
+        notice("Is category me abhi koi rate available nahi hai.", "warning")
+
+    # ---- vendor benchmark ---------------------------------------------------------
+    badge("Vendor Benchmark Summary (per-meter rates; column header par click karke sort karein)")
+    bm = vr_benchmark(x)
+    money = lambda lab: st.column_config.NumberColumn(lab, format="₹%.0f")
+    st.dataframe(bm, hide_index=True, column_config={
+        'Avg 44" Rate': money('Avg 44" Rate'), 'Avg 60" Rate': money('Avg 60" Rate'),
+        "Min Rate": money("Min Rate"), "Max Rate": money("Max Rate")}, **STRETCH)
+    st.caption('Averages sirf 44" aur 60" ke rates ka hai. 0 / blank (Pending) rates aur per-piece items average, min, max me nahi ginte.')
+
+    # ---- master table ---------------------------------------------------------------
+    badge(f"Master Rate Sheet ({len(x)} of {len(d)} items)")
+    cols = ["Vendor", "Fabric", "Category"] + VR_PRICE_COLS + ["Status", "Note"]
+    cfg = {c_: money(c_) for c_ in VR_PRICE_COLS}
+    st.dataframe(x[cols], hide_index=True, column_config=cfg, **STRETCH)
+    st.download_button("⬇️ Download CSV", x[cols].to_csv(index=False).encode("utf-8-sig"),
+                       file_name="vendor_rates_filtered.csv", mime="text/csv", key="dl_vr_master")
+
+
+# -----------------------------------------------------------------------------
 # 14. MAIN ROUTER
 # -----------------------------------------------------------------------------
 LIVE_OPTIONS = {"Off": 0, "Every 1 min": 60, "Every 2 min": 120, "Every 5 min": 300}
@@ -4099,7 +4496,7 @@ def _main_body():
 
     fy = f"{FY_START_YEAR}-{(FY_START_YEAR + 1) % 100:02d}"
     _html(f'<div class="dashboard-hero"><div class="hero-t">📊 Executive Operations &amp; Production Hub {fy}</div>'
-          f'<p>Overview · Designer · Production · Client · Sample · Fabricator · Fabric PO · Target &amp; Revenue · FLO Future — live from Google Sheets</p></div>')
+          f'<p>Overview · Designer · Production · Client · Sample · Fabricator · Fabric PO · Target &amp; Revenue · FLO Future · Vendor Rate — live from Google Sheets</p></div>')
 
     master_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "tracker")
     sample_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "sample_summary")
@@ -4111,7 +4508,7 @@ def _main_body():
 
     labels = ["📌 Overview", "👨‍🎨 Designer Dashboard", "🏭 Production Process Dashboard", "🏢 Client Dashboard",
               "🔬 Sample Dashboard", "🧵 Fabricator Dashboard", "🧾 Fabric PO Dashboard",
-              "🎯 Target & Revenue Dashboard", "🔮 FLO Future"]
+              "🎯 Target & Revenue Dashboard", "🔮 FLO Future", "💰 Vendor Rate"]
     # Only the open tab is built (Streamlit 1.5x+). Older Streamlit: all tabs are built, like before.
     try:
         tabs = st.tabs(labels, key="main_tab", on_change="rerun")
@@ -4119,7 +4516,7 @@ def _main_body():
     except TypeError:
         tabs = st.tabs(labels)
         lazy = False
-    t_ovw, t_des, t_prod, t_cli, t_smp, t_fab, t_po, t_tgt, t_ff = tabs
+    t_ovw, t_des, t_prod, t_cli, t_smp, t_fab, t_po, t_tgt, t_ff, t_vr = tabs
 
     def is_open(t):
         if not lazy:
@@ -4170,6 +4567,9 @@ def _main_body():
                 render_flo_future_dashboard(ff_name, SHEET_REGISTRY[ff_name])
             except SheetAccessError as e:
                 _ff_access_error(e)
+    if is_open(t_vr):
+        with t_vr:
+            render_vendor_rate_dashboard()
 
 
 if __name__ == "__main__":
