@@ -3147,7 +3147,7 @@ def _ff_chip(text, color):
 def ff_item_table(x, show_designer=False, height=None, total_label="TARGET"):
     """Item-level HTML table (like the sheet's 'Designer Wise' tab): status pill + coloured Days Left + total row."""
     if x.empty:
-        notice("Selected filters ke liye data nahi hai.")
+        notice("No data for the selected filters.")
         return
     sc = ff_status_colors(x["status"].unique())
     heads = ["Sr"] + (["Designer"] if show_designer else []) + [
@@ -3289,6 +3289,17 @@ def ff_visit_summary(a, b):
 
 
 # ============================== RENDER ==============================
+def _ff_access_error(e=None):
+    """English version of the access error, used only by the FLO Future tab."""
+    email = ""
+    try:
+        email = st.secrets["gcp_service_account"]["client_email"]
+    except Exception:
+        pass
+    notice("Could not open the Google Sheet. Share the sheet (Viewer) with this service account: "
+           + (email if email else "(client_email from secrets)") + (f"  ·  Details: {e}" if e else ""), "error")
+
+
 def render_flo_future_dashboard(sheet_name, cfg):
     tab = resolve_source_tab(cfg, name_regex=r"^\s*samples?\s*$")
     if tab:
@@ -3318,18 +3329,18 @@ def _ff_body(sheet_name, cfg, tab):
         pack = fetch_grid(sheet_id, tab)
         va, vb, vtab = _ff_load_visits(cfg)
     except SheetAccessError as e:
-        show_access_error(e)
+        _ff_access_error(e)
         return
     today = _today_ist()
     d, header_ok = build_ff_samples(pack["values"], today)
     period = cfg.get("period_label", "")
     hero("🔮", f"FLO Future – Promised Actions{(' · ' + period) if period else ''}", None, pack["synced"])
     if not header_ok:
-        notice(f"'{tab}' tab me header row (Designer / Qty Promised / Status / Due Date) nahi mili - default columns "
-               "(A..N) use hue hain, numbers check kar lein.", "warning")
+        notice(f"Header row (Designer / Qty Promised / Status / Due Date) not found in the '{tab}' tab - default "
+               "columns (A..N) were used, please verify the numbers.", "warning")
     if d.empty:
-        notice(f"'{tab}' tab me data nahi mila. Expected: row 1 = header (Designer, Team, Collection / Sample, Vendor, "
-               "Season, Qty Promised, Completed, Pending, Status, Due Date ...), row 2 se data.", "warning")
+        notice(f"No data found in the '{tab}' tab. Expected: row 1 = header (Designer, Team, Collection / Sample, Vendor, "
+               "Season, Qty Promised, Completed, Pending, Status, Due Date ...), data from row 2.", "warning")
         _ff_visits_chart(va, vb, vtab)
         return
 
@@ -3341,7 +3352,7 @@ def _ff_body(sheet_name, cfg, tab):
 
     # ---------------- filters ----------------
     keys = {"designer": "ff_designer", "team": "ff_team", "status": "ff_status", "due": "ff_due"}
-    badge("🔎 Filters  (kuch select na karein = ALL)  ·  Samples par lagte hain")
+    badge("🔎 Filters  (leave empty = ALL)  ·  apply to Samples")
     c = st.columns([1.4, 1.0, 1.3, 1.3, 0.7], vertical_alignment="bottom")
     f_des = multi(c[0], "Designer", des_order, keys["designer"], "All designers")
     f_team = multi(c[1], "Team", team_order, keys["team"], "All teams")
@@ -3360,13 +3371,13 @@ def _ff_body(sheet_name, cfg, tab):
 
     x = flt()
     x_nd = flt(skip=("designer",))       # designer comparison: all designers
-    st.caption(f"Aaj: {today.strftime('%d %b %Y')}  ·  Pending = Qty Promised − Completed  ·  Overdue = Due Date nikal "
-               "gayi aur Status 'Complete' nahi (sheet wala rule)  ·  Days Left = Due Date − aaj.")
+    st.caption(f"Today: {today.strftime('%d %b %Y')}  ·  Pending = Qty Promised − Completed  ·  Overdue = Due Date "
+               "has passed and Status is not 'Complete' (same rule as the sheet)  ·  Days Left = Due Date − today.")
 
     # ---------------- KPIs ----------------
     vs = ff_visit_summary(va, vb) if not vb.empty else pd.DataFrame()
     if x.empty:
-        notice("Selected filters ke liye koi promised sample nahi mila.")
+        notice("No promised samples found for the selected filters.")
     else:
         s = ff_stats(x)
         dg = ff_group(x, "designer", "Designer", [n for n in des_order if n in set(x["designer"])])
@@ -3395,13 +3406,13 @@ def _ff_body(sheet_name, cfg, tab):
         dsc.insert(1, "Team", dsc["Designer"].map(team_of))
         st.markdown("---")
         badge("👩‍🎨 Designer-wise Target vs Completed")
-        st.caption("Designer filter yahan apply nahi hota taaki sab designers ki tulna ho sake; baaki filters apply hote hain.")
+        st.caption("The Designer filter is not applied here so all designers can be compared; the other filters apply.")
         _ff_designer_chart(dsc, x_nd)
 
         # ================= 2) TABLE: designer-wise numbers =================
         st.markdown("---")
         badge("📊 Designer-wise Table")
-        st.caption("Done % ka rang: 🟢 ≥80%  🟡 40-79%  🔴 <40%.")
+        st.caption("Done % colour: 🟢 ≥80%  🟡 40-79%  🔴 <40%.")
         cols = ["Designer", "Team", "Items", "Target Qty", "Completed", "Pending", "Done %", "Overdue Items",
                 "Due ≤ 3 Days", "Nearest Open Due"]
         tbl = with_total(dsc[cols], "Designer", pct=("Done %", "Completed", "Target Qty"))
@@ -3411,9 +3422,9 @@ def _ff_body(sheet_name, cfg, tab):
 
         # ================= 3) TABLE: every sample, most urgent first =================
         st.markdown("---")
-        badge("📋 Sample Detail (sab items · sabse urgent upar)")
-        st.caption("Upar ke saare filters yahan lagte hain - ek designer chuno to uski poori list. "
-                   "Days Left: 🔴 late  🟡 0-3 din  🟢 3+ din / done.")
+        badge("📋 Sample Detail (all items · most urgent first)")
+        st.caption("All filters above apply here - pick one designer to see their full list. "
+                   "Days Left: 🔴 late  🟡 0-3 days  🟢 3+ days / done.")
         rank = x["due_bucket"].map({b: i for i, b in enumerate(FF_DUE_BUCKETS)})
         ff_item_table(x.assign(_r=rank).sort_values(["_r", "days_left", "designer"], na_position="last"),
                       show_designer=True, height=620, total_label="TOTAL")
@@ -3440,7 +3451,7 @@ def _ff_designer_chart(dsc, x_nd):
     Completed (green) + Pending overdue (red) + Pending due in 0-3 days (orange) + Other pending (light blue).
     Label on top: Done % and done / target. Hover shows the full detail of that designer."""
     if dsc.empty:
-        notice("Selected filters ke liye data nahi hai.")
+        notice("No data for the selected filters.")
         return
     o = dsc.sort_values(["Target Qty", "Designer"], ascending=[False, True]).reset_index(drop=True)
     od = o["Designer"].map(x_nd[x_nd["due_bucket"] == "Overdue"].groupby("designer")["pending"].sum()).fillna(0.0)
@@ -3457,7 +3468,7 @@ def _ff_designer_chart(dsc, x_nd):
     for name, vals, color in (("Completed", o["Completed"], COLORS["green"]),
                               ("Pending · Overdue", od, COLORS["red"]),
                               ("Pending · Due in 0-3 Days", soon, COLORS["orange"]),
-                              ("Pending · Baad me due / No date", rest, _hex_to_rgba(COLORS["blue"], 0.35))):
+                              ("Pending · Due later / No date", rest, _hex_to_rgba(COLORS["blue"], 0.35))):
         fig.add_trace(go.Bar(name=name, x=xlab, y=vals, marker_color=color, marker_line=dict(width=0),
                              text=[fmt(v) if v >= 1 else "" for v in vals], textposition="inside",
                              insidetextanchor="middle", textangle=0, textfont=dict(size=11),
@@ -3471,22 +3482,22 @@ def _ff_designer_chart(dsc, x_nd):
                            font=dict(size=11, color=color))
     fig.update_layout(barmode="stack", bargap=0.32, legend_traceorder="normal", uniformtext_minsize=9,
                       uniformtext_mode="hide")
-    fig.update_yaxes(title="Pcs (poora column = Target)", range=[0, top * 1.22 + 1])
+    fig.update_yaxes(title="Pcs (full column = Target)", range=[0, top * 1.22 + 1])
     fig.update_xaxes(title="", tickfont=dict(size=11))
     tot = dsc[["Target Qty", "Completed"]].sum()
     chart(fig, "Designer-wise Target vs Completed (Pcs)", 470, ns="ff",
           subtitle=f"Total {fmt(tot['Completed'])} / {fmt(tot['Target Qty'])} done "
-                   f"({safe_div_pct(tot['Completed'], tot['Target Qty']):.1f}%) · upar = Done % aur done/target · "
-                   "mouse le jao to poori detail")
+                   f"({safe_div_pct(tot['Completed'], tot['Target Qty']):.1f}%) · top label = Done % and done/target · "
+                   "hover for full details")
 
 
 def _ff_visits_chart(va, vb, vtab, vs=None):
     """Vertical grouped columns per activity: Required | Done | Missed (date passed, not marked) | Upcoming.
     Under each activity: 'x / y done'; above an activity with a problem: a warning. Hover lists names + dates."""
     st.markdown("---")
-    badge("🗓️ Visits & Meetings (is mahine)")
+    badge("🗓️ Visits & Meetings (this month)")
     if vtab is None or vb.empty:
-        notice("'Visits & Meetings' tab nahi mila ya usme 'Causative Milestone' blocks nahi mile.", "warning")
+        notice("'Visits & Meetings' tab not found, or it has no 'Causative Milestone' blocks.", "warning")
         return
     vs = vs if vs is not None and not vs.empty else ff_visit_summary(va, vb)
     vc = ff_visit_colors()
@@ -3512,8 +3523,8 @@ def _ff_visits_chart(va, vb, vtab, vs=None):
                              hovertemplate="%{x}<br><b>" + name + ": %{y}</b><br>%{customdata}<extra></extra>"))
     top = float(vs["Required (Month)"].max()) if len(vs) else 1.0
     for i, r in vs.iterrows():
-        msg = "⚠ Plan nahi hua" if r["Planned"] == 0 else (
-            f"⚠ {int(r['Missed / Not Marked'])} mark nahi" if r["Missed / Not Marked"] else "")
+        msg = "⚠ Not planned" if r["Planned"] == 0 else (
+            f"⚠ {int(r['Missed / Not Marked'])} not marked" if r["Missed / Not Marked"] else "")
         if msg:
             fig.add_annotation(x=xlab[i], y=float(r["Required (Month)"]), yshift=22, yanchor="bottom",
                                showarrow=False, text=msg, font=dict(size=11, color=COLORS["red"]))
@@ -3522,8 +3533,8 @@ def _ff_visits_chart(va, vb, vtab, vs=None):
     fig.update_xaxes(title="", tickfont=dict(size=11))
     done, req = int(vs["Done"].sum()), int(vs["Required (Month)"].sum())
     chart(fig, "Visits & Meetings: Required vs Done", 440, ns="ff",
-          subtitle=f"{done} / {req} done · Done = sheet me 'X' ya STATUS 'Done' · Missed = date nikal gayi par mark nahi · "
-                   "bar par mouse le jao to naam aur date")
+          subtitle=f"{done} / {req} done · Done = 'X' or STATUS 'Done' in the sheet · Missed = date passed but not "
+                   "marked done · hover a bar for names and dates")
 
 
 # -----------------------------------------------------------------------------
@@ -4155,7 +4166,10 @@ def _main_body():
             _safe(render_target_dashboard, tgt_name, SHEET_REGISTRY[tgt_name])
     if is_open(t_ff):
         with t_ff:
-            _safe(render_flo_future_dashboard, ff_name, SHEET_REGISTRY[ff_name])
+            try:
+                render_flo_future_dashboard(ff_name, SHEET_REGISTRY[ff_name])
+            except SheetAccessError as e:
+                _ff_access_error(e)
 
 
 if __name__ == "__main__":
